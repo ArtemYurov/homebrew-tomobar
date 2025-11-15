@@ -1,0 +1,85 @@
+name: Update Cask Formula
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Check for updates every 6 hours
+  workflow_dispatch:        # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for new version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get latest release version from TomoBar
+          LATEST=$(gh release view --repo ArtemYurov/TomoBar --json tagName -q .tagName)
+          echo "Latest release: $LATEST"
+
+          # Get current version from formula
+          CURRENT=$(grep 'version' Casks/tomobar.rb | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Current version: $CURRENT"
+
+          # Output for next steps
+          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+          echo "current=v$CURRENT" >> $GITHUB_OUTPUT
+
+          # Check if update is needed
+          if [ "$LATEST" != "v$CURRENT" ]; then
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+            echo "✅ Update needed: $CURRENT → ${LATEST#v}"
+          else
+            echo "needs_update=false" >> $GITHUB_OUTPUT
+            echo "✅ Already up to date: $CURRENT"
+          fi
+
+      - name: Download and update formula
+        if: steps.version.outputs.needs_update == 'true'
+        env:
+          LATEST: ${{ steps.version.outputs.latest }}
+        run: |
+          # Extract version number (remove 'v' prefix)
+          VERSION=${LATEST#v}
+          echo "Updating to version: $VERSION"
+
+          # Download new DMG
+          DMG_URL="https://github.com/ArtemYurov/TomoBar/releases/download/${LATEST}/TomoBar-${LATEST}.dmg"
+          echo "Downloading: $DMG_URL"
+          curl -L -o TomoBar.dmg "$DMG_URL"
+
+          # Calculate SHA256
+          SHA256=$(shasum -a 256 TomoBar.dmg | awk '{print $1}')
+          echo "SHA256: $SHA256"
+
+          # Update formula
+          sed -i '' "s/version \".*\"/version \"$VERSION\"/" Casks/tomobar.rb
+          sed -i '' "s/sha256 \".*\"/sha256 \"$SHA256\"/" Casks/tomobar.rb
+
+          # Clean up
+          rm TomoBar.dmg
+
+          echo "✅ Formula updated successfully"
+
+      - name: Commit and push changes
+        if: steps.version.outputs.needs_update == 'true'
+        env:
+          LATEST: ${{ steps.version.outputs.latest }}
+        run: |
+          VERSION=${LATEST#v}
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add Casks/tomobar.rb
+          git commit -m "chore: bump tomobar to $VERSION"
+          git push
+
+          echo "✅ Changes committed and pushed"
