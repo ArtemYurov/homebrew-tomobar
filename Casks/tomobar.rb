@@ -1,6 +1,6 @@
 cask "tomobar" do
-  version "4.0.1"
-  sha256 "9ae05419b974e291e966577b8910113f95898a9f06c7bb4cc84b3fa0967f7a61"
+  version "4.1.0"
+  sha256 "30335c711116f0e329cd0191e413bcf63a6441a4df7196ee05301ab8f278d7d6"
 
   url "https://github.com/ArtemYurov/TomoBar/releases/download/v#{version}/TomoBar-v#{version}.dmg"
   name "TomoBar"
