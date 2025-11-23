@@ -15,7 +15,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check for new version
+      - name: Check for new version or checksum change
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -24,21 +24,40 @@ jobs:
           LATEST=$(gh release view --repo ArtemYurov/TomoBar --json tagName -q .tagName)
           echo "Latest release: $LATEST"
 
-          # Get current version from formula
+          # Get current version and checksum from formula
           CURRENT=$(grep 'version' Casks/tomobar.rb | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          CURRENT_SHA=$(grep 'sha256' Casks/tomobar.rb | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "Current version: $CURRENT"
+          echo "Current SHA256: $CURRENT_SHA"
 
           # Output for next steps
           echo "latest=$LATEST" >> $GITHUB_OUTPUT
           echo "current=v$CURRENT" >> $GITHUB_OUTPUT
+          echo "current_sha=$CURRENT_SHA" >> $GITHUB_OUTPUT
 
-          # Check if update is needed
+          # Check if version update is needed
           if [ "$LATEST" != "v$CURRENT" ]; then
             echo "needs_update=true" >> $GITHUB_OUTPUT
-            echo "✅ Update needed: $CURRENT → ${LATEST#v}"
+            echo "✅ Version update needed: $CURRENT → ${LATEST#v}"
           else
-            echo "needs_update=false" >> $GITHUB_OUTPUT
-            echo "✅ Already up to date: $CURRENT"
+            # Version is same, but let's verify checksum
+            VERSION=${LATEST#v}
+            DMG_URL="https://github.com/ArtemYurov/TomoBar/releases/download/${LATEST}/TomoBar-${LATEST}.dmg"
+            echo "Downloading to verify checksum: $DMG_URL"
+            curl -L -o TomoBar-verify.dmg "$DMG_URL"
+            ACTUAL_SHA=$(shasum -a 256 TomoBar-verify.dmg | awk '{print $1}')
+            rm TomoBar-verify.dmg
+            echo "Actual SHA256: $ACTUAL_SHA"
+
+            if [ "$ACTUAL_SHA" != "$CURRENT_SHA" ]; then
+              echo "needs_update=true" >> $GITHUB_OUTPUT
+              echo "⚠️ Checksum mismatch detected! File was republished."
+              echo "Expected: $CURRENT_SHA"
+              echo "Actual:   $ACTUAL_SHA"
+            else
+              echo "needs_update=false" >> $GITHUB_OUTPUT
+              echo "✅ Already up to date: $CURRENT (checksum verified)"
+            fi
           fi
 
       - name: Download and update formula
@@ -72,6 +91,7 @@ jobs:
         if: steps.version.outputs.needs_update == 'true'
         env:
           LATEST: ${{ steps.version.outputs.latest }}
+          CURRENT: ${{ steps.version.outputs.current }}
         run: |
           VERSION=${LATEST#v}
 
@@ -79,7 +99,14 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add Casks/tomobar.rb
-          git commit -m "chore: bump tomobar to $VERSION"
+
+          # Determine commit message based on whether version changed
+          if [ "$LATEST" != "$CURRENT" ]; then
+            git commit -m "chore: bump tomobar to $VERSION"
+          else
+            git commit -m "fix: update tomobar $VERSION checksum after release republish"
+          fi
+
           git push
 
           echo "✅ Changes committed and pushed"
